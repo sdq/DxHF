@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DxHF</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="top-content">
+  <div class="message user">
+    <p>👱🏽: When is the best time to visit Florida?</p>
+  </div>
+  
+</div>
+<div id="top-instruction">
+  <div class="message bot">
+    <p>
+    🤖: Which one is more helpful? 
+    <button id="toggle-button">Decompose</button> 
+  </p>
+  </div>
+  
+</div>
+
+<div class="container" id="container">
+  <div class="list response" id="left-left-list">
+    <h3>Response A</h3>
+  </div>
+  <div class="list" id="left-list" style="display: none;">
+    <div class="list-header">
+      <h3>Claims from A</h3>
+      <!-- Small sort/reset button with ranking icon on the right -->
+      <button id="left-sort-button" class="sort-button" title="Sort by Relevance">⇅</button>
+    </div>
+  </div>
+  <div class="list" id="middle-list" style="display: none;">
+    <div class="list-header">
+      <h3>Links</h3>
+      <!-- Grouping button added beside the header -->
+      <button id="middle-group-button" class="sort-button" title="Group links">☰</button>
+    </div>
+  </div>
+  <div class="list" id="right-list" style="display: none;">
+    <div class="list-header">
+      <h3>Claims from B</h3>
+      <!-- Small sort/reset button with ranking icon on the right -->
+      <button id="right-sort-button" class="sort-button" title="Sort by Relevance">⇅</button>
+    </div>
+  </div>
+  <div class="list response" id="right-right-list">
+    <h3>Response B</h3>
+  </div>
+</div>
+
+<!-- SVG hidden by default -->
+<svg id="link-svg" style="display: none;"></svg>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="data.js"></script>
+<script>
+  // --- URL Parameters for Data, Decompose, and Link ---
+  const params = new URLSearchParams(window.location.search);
+  const index = 0;
+  // Read URL parameters "decompose" and "link"
+  const decomposeFlag = params.get('decompose') === "1";
+  var linkFlag = true;
+  var rankFlag = true;
+  if (!decomposeFlag) {
+    linkFlag = false;
+    // rankFlag = false;
+  }
+
+  if (!rankFlag) {
+    document.getElementById("left-sort-button").style.display = "none";
+    document.getElementById("right-sort-button").style.display = "none"; 
+  }
+
+  const contextHTML = data[index]["context"];
+  document.querySelector("#top-content p").innerHTML = contextHTML;
+  const leftSentences = data[index]["accepted_responses"];
+  const leftClaims = data[index]["accepted_response_claims"];
+  const rightSentences = data[index]["rejected_responses"];
+  const rightClaims = data[index]["rejected_response_claims"];
+  const connections = data[index]["links"]
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 10);
+
+  const allRelevances = leftClaims.concat(rightClaims).map(d => d.relevance);
+  const colorScale = d3.scaleLinear().domain([0, 1]).range(["#ffffff", "#cc0000"]);
+  const simScores = connections.map(d => d.similarity);
+  const minSim = d3.min(simScores);
+  const maxSim = d3.max(simScores);
+  const simScale = d3.scaleLinear().domain([minSim, maxSim]).range([1, 8]);
+  const minRel = d3.min(allRelevances);
+  const maxRel = d3.max(allRelevances);
+  const opacityScale = d3.scaleLinear().domain([minRel, maxRel]).range([0.1, 1]);
+
+  // Order connections for the middle list.
+  connections.sort((a, b) => {
+    const totalA = leftClaims[a.accept_claim_index].relevance + rightClaims[a.reject_claim_index].relevance;
+    const totalB = leftClaims[b.accept_claim_index].relevance + rightClaims[b.reject_claim_index].relevance;
+    return totalB - totalA;
+  });
+
+  // --- Populate Sentence and Claim Lists ---
+  const leftLeftList = document.getElementById("left-left-list");
+  leftSentences.forEach((sentence, i) => {
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.id = "left-left-item-" + i;
+    span.textContent = sentence.sentence;
+    leftLeftList.appendChild(span);
+  });
+  const rightRightList = document.getElementById("right-right-list");
+  rightSentences.forEach((sentence, i) => {
+    const span = document.createElement("span");
+    span.className = "sentence";
+    span.id = "right-right-item-" + i;
+    span.textContent = sentence.sentence;
+    rightRightList.appendChild(span);
+  });
+
+  const leftList = document.getElementById("left-list");
+  leftClaims.forEach((claim, i) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.id = "left-item-" + i;
+    div.textContent = claim.relevance > 0.0 ? claim.claim : "";
+    div.style.color = rankFlag ? "rgba(0,0,0," + opacityScale(claim.relevance) + ")" : "black";
+    div.setAttribute("data-relevance", claim.relevance);
+    leftList.appendChild(div);
+  });
+  const rightList = document.getElementById("right-list");
+  rightClaims.forEach((claim, i) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.id = "right-item-" + i;
+    div.textContent = claim.relevance > 0.0 ? claim.claim : "";
+    div.style.color = rankFlag ? "rgba(0,0,0," + opacityScale(claim.relevance) + ")" : "black";
+    div.setAttribute("data-relevance", claim.relevance);
+    rightList.appendChild(div);
+  });
+
+  // --- Populate Middle List (Ungrouped) ---
+  function populateMiddleListUngrouped() {
+    const middleList = document.getElementById("middle-list");
+    // Preserve the header (which contains "Links" and the grouping button)
+    const header = middleList.querySelector(".list-header");
+    middleList.innerHTML = "";
+    middleList.appendChild(header);
+    connections.forEach((conn, i) => {
+      const div = document.createElement("div");
+      div.className = "item middle-item";
+      div.id = "middle-item-" + i;
+      div.textContent = conn.keyword;
+      div.setAttribute("data-similarity", conn.similarity);
+      middleList.appendChild(div);
+    });
+    addMiddleHoverListeners();
+  }
+  populateMiddleListUngrouped();
+
+  // --- Apply URL Parameter Settings ---
+  if(decomposeFlag) {
+    document.getElementById("left-list").style.display = "";
+    document.getElementById("right-list").style.display = "";
+    // Reset outer sentence list positions.
+    document.getElementById("left-left-list").style.transform = "translateX(0)";
+    document.getElementById("right-right-list").style.transform = "translateX(0)";
+  }
+  if(linkFlag) {
+    document.getElementById("middle-list").style.display = "";
+    d3.select("#link-svg").style("display", null);
+  }
+
+  // --- Helper: Get Element Position ---
+  function getItemPosition(itemId, side) {
+    const el = document.getElementById(itemId);
+    const rect = el.getBoundingClientRect();
+    return {
+      x: side === "left" ? rect.left : rect.left + rect.width,
+      y: rect.top + rect.height / 2
+    };
+  }
+
+  // --- SVG Setup and Initial Lines (Ungrouped) ---
+  const svg = d3.select("#link-svg")
+      .attr("width", window.innerWidth)
+      .attr("height", window.innerHeight);
+
+  const leftToMiddleLines = svg.selectAll(".left-to-middle-line")
+      .data(connections)
+      .enter()
+      .append("line")
+      .attr("class", "left-to-middle-line")
+      .attr("stroke", "gray")
+      .attr("stroke-width", 2);
+
+  const middleToRightLines = svg.selectAll(".middle-to-right-line")
+      .data(connections)
+      .enter()
+      .append("line")
+      .attr("class", "middle-to-right-line")
+      .attr("stroke", "gray")
+      .attr("stroke-width", 2);
+
+  const leftSideData = leftClaims.map((d, i) => ({ claimIndex: i, sentenceIndex: d.from }));
+  const rightSideData = rightClaims.map((d, i) => ({ claimIndex: i, sentenceIndex: d.from }));
+
+  // --- Update Functions for SVG Links ---
+  function updateLines() {
+    leftToMiddleLines
+      .attr("x1", d => getItemPosition("left-item-" + d.accept_claim_index, "right").x)
+      .attr("y1", d => getItemPosition("left-item-" + d.accept_claim_index, "right").y)
+      .attr("x2", (d, i) => getItemPosition("middle-item-" + i, "left").x)
+      .attr("y2", (d, i) => getItemPosition("middle-item-" + i, "left").y);
+    middleToRightLines
+      .attr("x1", (d, i) => getItemPosition("middle-item-" + i, "right").x)
+      .attr("y1", (d, i) => getItemPosition("middle-item-" + i, "right").y)
+      .attr("x2", d => getItemPosition("right-item-" + d.reject_claim_index, "left").x)
+      .attr("y2", d => getItemPosition("right-item-" + d.reject_claim_index, "left").y);
+  }
+  updateLines();
+
+  function updateGroupedLines() {
+    svg.selectAll(".grouped-left-line").remove();
+    svg.selectAll(".grouped-right-line").remove();
+    const middleList = document.getElementById("middle-list");
+    const groupItems = middleList.querySelectorAll(".middle-item.grouped");
+    groupItems.forEach(item => {
+      const groupedConnections = item.groupedConnections;
+      const leftPositions = groupedConnections.map(conn =>
+        getItemPosition("left-item-" + conn.accept_claim_index, "right")
+      );
+      const rightPositions = groupedConnections.map(conn =>
+        getItemPosition("right-item-" + conn.reject_claim_index, "left")
+      );
+      const avgLeft = {
+        x: d3.mean(leftPositions, d => d.x),
+        y: d3.mean(leftPositions, d => d.y)
+      };
+      const avgRight = {
+        x: d3.mean(rightPositions, d => d.x),
+        y: d3.mean(rightPositions, d => d.y)
+      };
+      svg.append("line")
+        .attr("class", "grouped-left-line")
+        .attr("data-group-id", item.id)
+        .attr("stroke", "gray")
+        .attr("stroke-width", 2)
+        .attr("x1", avgLeft.x)
+        .attr("y1", avgLeft.y)
+        .attr("x2", getItemPosition(item.id, "left").x)
+        .attr("y2", getItemPosition(item.id, "left").y);
+      svg.append("line")
+        .attr("class", "grouped-right-line")
+        .attr("data-group-id", item.id)
+        .attr("stroke", "gray")
+        .attr("stroke-width", 2)
+        .attr("x1", getItemPosition(item.id, "right").x)
+        .attr("y1", getItemPosition(item.id, "right").y)
+        .attr("x2", avgRight.x)
+        .attr("y2", avgRight.y);
+    });
+  }
+
+  // --- Update Outer Positions ---
+  function updateOuterPositions() {
+    const container = document.getElementById("container");
+    const containerWidth = container.clientWidth;
+    const leftLeftEl = document.getElementById("left-left-list");
+    const rightRightEl = document.getElementById("right-right-list");
+    const centerX = containerWidth / 2;
+    const leftTranslate = centerX - leftLeftEl.clientWidth;
+    const rightTranslate = -(containerWidth - centerX - rightRightEl.clientWidth);
+    leftLeftEl.style.transform = `translateX(${leftTranslate}px)`;
+    rightRightEl.style.transform = `translateX(${rightTranslate}px)`;
+  }
+  updateOuterPositions();
+
+  window.addEventListener("resize", () => {
+    svg.attr("width", window.innerWidth).attr("height", window.innerHeight);
+    if (document.getElementById("left-list").style.display === "none") {
+      updateOuterPositions();
+    }
+    if(isGrouped){
+      updateGroupedLines();
+    } else {
+      updateLines();
+    }
+  });
+
+  // --- Hover Functionality for Left/Right Items ---
+  function addHoverListeners() {
+    document.querySelectorAll('.item').forEach(item => {
+      item.addEventListener('mouseenter', function() {
+        leftToMiddleLines.attr("opacity", 0.2).classed("hover-line", false);
+        middleToRightLines.attr("opacity", 0.2).classed("hover-line", false);
+        document.querySelectorAll('.hover-item').forEach(el => el.classList.remove("hover-item"));
+        const id = this.id;
+        if (id.startsWith("left-item-")) {
+          let accept_claim_index = parseInt(id.replace("left-item-", ""));
+          this.classList.add("hover-item");
+          let leftSentenceIndex = leftClaims[accept_claim_index].from;
+          const leftSentenceEl = document.getElementById("left-left-item-" + leftSentenceIndex);
+          if (leftSentenceEl) leftSentenceEl.classList.add("hover-item");
+          // leftSideLines.filter(d => d.claimIndex === accept_claim_index)
+          //   .classed("hover-side-line", true);
+          connections.forEach((conn, i) => {
+            if (conn.accept_claim_index === accept_claim_index) {
+              leftToMiddleLines.filter((d, j) => j === i)
+                .attr("opacity", 1)
+                .classed("hover-line", true);
+              const middleEl = document.getElementById("middle-item-" + i);
+              if (middleEl) middleEl.classList.add("hover-item");
+              const rightEl = document.getElementById("right-item-" + conn.reject_claim_index);
+              if (rightEl) {
+                rightEl.classList.add("hover-item");
+                let rightSentenceIndex = rightClaims[conn.reject_claim_index].from;
+                const rightSentenceEl = document.getElementById("right-right-item-" + rightSentenceIndex);
+                if (rightSentenceEl) rightSentenceEl.classList.add("hover-item");
+              }
+              middleToRightLines.filter((d, j) => j === i)
+                .attr("opacity", 1)
+                .classed("hover-line", true);
+            }
+          });
+        } else if (id.startsWith("right-item-")) {
+          let reject_claim_index = parseInt(id.replace("right-item-", ""));
+          this.classList.add("hover-item");
+          let rightSentenceIndex = rightClaims[reject_claim_index].from;
+          const rightSentenceEl = document.getElementById("right-right-item-" + rightSentenceIndex);
+          if (rightSentenceEl) rightSentenceEl.classList.add("hover-item");
+          connections.forEach((conn, i) => {
+            if (conn.reject_claim_index === reject_claim_index) {
+              middleToRightLines.filter((d, j) => j === i)
+                .attr("opacity", 1)
+                .classed("hover-line", true);
+              const middleEl = document.getElementById("middle-item-" + i);
+              if (middleEl) middleEl.classList.add("hover-item");
+              const leftEl = document.getElementById("left-item-" + conn.accept_claim_index);
+              if (leftEl) {
+                leftEl.classList.add("hover-item");
+                let leftSentenceIndex = leftClaims[conn.accept_claim_index].from;
+                const leftSentenceEl = document.getElementById("left-left-item-" + leftSentenceIndex);
+                if (leftSentenceEl) leftSentenceEl.classList.add("hover-item");
+              }
+              leftToMiddleLines.filter((d, j) => j === i)
+                .attr("opacity", 1)
+                .classed("hover-line", true);
+            }
+          });
+        } else if (id.startsWith("middle-item-")) {
+          let midIndex = parseInt(id.replace("middle-item-", ""));
+          this.classList.add("hover-item");
+          const conn = connections[midIndex];
+          const leftEl = document.getElementById("left-item-" + conn.accept_claim_index);
+          if (leftEl) {
+            leftEl.classList.add("hover-item");
+            let leftSentenceIndex = leftClaims[conn.accept_claim_index].from;
+            const leftSentenceEl = document.getElementById("left-left-item-" + leftSentenceIndex);
+            if (leftSentenceEl) leftSentenceEl.classList.add("hover-item");
+          }
+          const rightEl = document.getElementById("right-item-" + conn.reject_claim_index);
+          if (rightEl) {
+            rightEl.classList.add("hover-item");
+            let rightSentenceIndex = rightClaims[conn.reject_claim_index].from;
+            const rightSentenceEl = document.getElementById("right-right-item-" + rightSentenceIndex);
+            if (rightSentenceEl) rightSentenceEl.classList.add("hover-item");
+          }
+          leftToMiddleLines.filter((d, j) => j === midIndex)
+            .attr("opacity", 1)
+            .classed("hover-line", true);
+          middleToRightLines.filter((d, j) => j === midIndex)
+            .attr("opacity", 1)
+            .classed("hover-line", true);
+        }
+      });
+      item.addEventListener('mouseleave', function() {
+        leftToMiddleLines.attr("opacity", 1).classed("hover-line", false);
+        middleToRightLines.attr("opacity", 1).classed("hover-line", false);
+        document.querySelectorAll('.hover-item').forEach(el => el.classList.remove("hover-item"));
+      });
+    });
+  }
+  addHoverListeners();
+
+  // --- Hover Listeners for Middle List Items (Grouped & Ungrouped) ---
+  function addMiddleHoverListeners() {
+    document.querySelectorAll("#middle-list .item").forEach(item => {
+      item.addEventListener("mouseover", function() {
+        // Always highlight the middle item.
+        this.classList.add("hover-item");
+        if (this.classList.contains("grouped")) {
+          // Highlight grouped SVG links associated with this item.
+          svg.selectAll("line.grouped-left-line")
+             .filter(function() { return d3.select(this).attr("data-group-id") === item.id; })
+             .attr("opacity", 1)
+             .classed("hover-line", true);
+          svg.selectAll("line.grouped-right-line")
+             .filter(function() { return d3.select(this).attr("data-group-id") === item.id; })
+             .attr("opacity", 1)
+             .classed("hover-line", true);
+          // Highlight each connected left/right item and sentence.
+          if (item.groupedConnections) {
+            item.groupedConnections.forEach(conn => {
+              const leftItem = document.getElementById("left-item-" + conn.accept_claim_index);
+              if (leftItem) leftItem.classList.add("hover-item");
+              const leftSentence = document.getElementById("left-left-item-" + leftClaims[conn.accept_claim_index].from);
+              if (leftSentence) leftSentence.classList.add("hover-item");
+              const rightItem = document.getElementById("right-item-" + conn.reject_claim_index);
+              if (rightItem) rightItem.classList.add("hover-item");
+              const rightSentence = document.getElementById("right-right-item-" + rightClaims[conn.reject_claim_index].from);
+              if (rightSentence) rightSentence.classList.add("hover-item");
+            });
+          }
+        } else {
+          // Ungrouped middle item.
+          const sim = this.getAttribute("data-similarity");
+          let midIndex = parseInt(this.id.replace("middle-item-", ""));
+          svg.selectAll("line.left-to-middle-line")
+             .filter((d, i) => i === midIndex)
+             .attr("opacity", 1)
+             .classed("hover-line", true);
+          svg.selectAll("line.middle-to-right-line")
+             .filter((d, i) => i === midIndex)
+             .attr("opacity", 1)
+             .classed("hover-line", true);
+          const conn = connections[midIndex];
+          if(conn) {
+            const leftItem = document.getElementById("left-item-" + conn.accept_claim_index);
+            if(leftItem) leftItem.classList.add("hover-item");
+            const leftSentence = document.getElementById("left-left-item-" + leftClaims[conn.accept_claim_index].from);
+            if(leftSentence) leftSentence.classList.add("hover-item");
+            const rightItem = document.getElementById("right-item-" + conn.reject_claim_index);
+            if(rightItem) rightItem.classList.add("hover-item");
+            const rightSentence = document.getElementById("right-right-item-" + rightClaims[conn.reject_claim_index].from);
+            if(rightSentence) rightSentence.classList.add("hover-item");
+          }
+        }
+      });
+      item.addEventListener("mouseout", function() {
+        svg.selectAll("line.hover-line")
+           .attr("opacity", 1)
+           .classed("hover-line", false);
+        document.querySelectorAll('.hover-item').forEach(el => el.classList.remove("hover-item"));
+      });
+    });
+  }
+  // (addMiddleHoverListeners is called after populating the middle list)
+
+  // --- Toggle Buttons ---
+  document.getElementById("toggle-button").addEventListener("click", function() {
+    const leftListEl = document.getElementById("left-list");
+    const rightListEl = document.getElementById("right-list");
+    const leftLeftEl = document.getElementById("left-left-list");
+    const rightRightEl = document.getElementById("right-right-list");
+    const middleListEl = document.getElementById("middle-list");
+    const svgEl = d3.select("#link-svg");
+    if (leftListEl.style.display === "none") {
+      leftListEl.style.display = "";
+      rightListEl.style.display = "";
+      leftLeftEl.style.transform = "translateX(0)";
+      rightRightEl.style.transform = "translateX(0)";
+      middleListEl.style.display = "";
+      svgEl.style("display", null);
+      if(isGrouped){
+        updateGroupedLines();
+      } else {
+        updateLines();
+      }
+    } else {
+      leftListEl.style.display = "none";
+      rightListEl.style.display = "none";
+      middleListEl.style.display = "none";
+      svgEl.style("display", "none");
+      updateOuterPositions();
+    }
+  });
+
+  // --- Sorting (Reorder) Buttons ---
+  let leftSorted = false;
+  const leftSortButton = document.getElementById("left-sort-button");
+  leftSortButton.addEventListener("click", function() {
+    const items = Array.from(leftList.querySelectorAll(".item"));
+    if (!leftSorted) {
+      items.sort((a, b) => parseFloat(b.getAttribute("data-relevance")) - parseFloat(a.getAttribute("data-relevance")));
+      leftSortButton.title = "Reset Order";
+      leftSorted = true;
+    } else {
+      items.sort((a, b) => {
+        const aIndex = parseInt(a.id.replace("left-item-", ""));
+        const bIndex = parseInt(b.id.replace("left-item-", ""));
+        return aIndex - bIndex;
+      });
+      leftSortButton.title = "Sort by Relevance";
+      leftSorted = false;
+    }
+    items.forEach(item => leftList.appendChild(item));
+    if(isGrouped){
+      updateGroupedLines();
+    } else {
+      updateLines();
+    }
+  });
+
+  let rightSorted = false;
+  const rightSortButton = document.getElementById("right-sort-button");
+  rightSortButton.addEventListener("click", function() {
+    const items = Array.from(rightList.querySelectorAll(".item"));
+    if (!rightSorted) {
+      items.sort((a, b) => parseFloat(b.getAttribute("data-relevance")) - parseFloat(a.getAttribute("data-relevance")));
+      rightSortButton.title = "Reset Order";
+      rightSorted = true;
+    } else {
+      items.sort((a, b) => {
+        const aIndex = parseInt(a.id.replace("right-item-", ""));
+        const bIndex = parseInt(b.id.replace("right-item-", ""));
+        return aIndex - bIndex;
+      });
+      rightSortButton.title = "Sort by Relevance";
+      rightSorted = false;
+    }
+    items.forEach(item => rightList.appendChild(item));
+    if(isGrouped){
+      updateGroupedLines();
+    } else {
+      updateLines();
+    }
+  });
+
+  // Function to check if both a preference and confidence rating have been set.
+  function updateSubmitButtonState() {
+    const selectedChoice = document.querySelector("input[name='choice']:checked");
+    const confidence = document.getElementById("confidence").value;
+    const submitButton = document.getElementById("submitButton");
+
+    // Enable the button only if a radio button is selected and confidence > 0.
+    if (selectedChoice && parseInt(confidence, 10) > 0) {
+      submitButton.disabled = false;
+    } else {
+      submitButton.disabled = true;
+    }
+  }
+
+  // Add listeners for radio button changes.
+  const choiceInputs = document.querySelectorAll("input[name='choice']");
+  choiceInputs.forEach(input => {
+    input.addEventListener("change", updateSubmitButtonState);
+  });
+
+  // --- Star rating for confidence ---
+  const stars = document.querySelectorAll("#star-rating .star");
+  stars.forEach(star => {
+    star.addEventListener("click", function() {
+      const rating = parseInt(this.getAttribute("data-value"), 10);
+      document.getElementById("confidence").value = rating;
+      // Update star appearance.
+      stars.forEach(s => {
+        if (parseInt(s.getAttribute("data-value"), 10) <= rating) {
+          s.classList.add("selected");
+          s.innerHTML = "&#9733;"; // filled star
+        } else {
+          s.classList.remove("selected");
+          s.innerHTML = "&#9734;"; // empty star
+        }
+      });
+      updateSubmitButtonState();
+    });
+  });
+
+  // --- Grouping Feature for Middle List ---
+  let isGrouped = false;
+  const middleGroupButton = document.getElementById("middle-group-button");
+  middleGroupButton.addEventListener("click", function() {
+    if (!isGrouped) {
+      groupMiddleList();
+      isGrouped = true;
+      middleGroupButton.title = "Ungroup links";
+    } else {
+      ungroupMiddleList();
+      isGrouped = false;
+      middleGroupButton.title = "Group links";
+    }
+    if(isGrouped){
+      updateGroupedLines();
+    } else {
+      updateLines();
+    }
+  });
+
+  function groupMiddleList() {
+    const middleList = document.getElementById("middle-list");
+    const header = middleList.querySelector(".list-header");
+    middleList.innerHTML = "";
+    middleList.appendChild(header);
+    // Group connections by keyword using d3.group.
+    const grouped = d3.group(connections, d => d.keyword);
+    let index = 0;
+    grouped.forEach((groupConnections, keyword) => {
+      const div = document.createElement("div");
+      div.className = "item middle-item grouped";
+      div.id = "middle-group-item-" + index;
+      div.textContent = `${keyword} (${groupConnections.length})`;
+      // Store the grouped connections on the element for later use.
+      div.groupedConnections = groupConnections;
+      middleList.appendChild(div);
+      index++;
+    });
+    addMiddleHoverListeners();
+    // Hide original ungrouped links.
+    svg.selectAll(".left-to-middle-line").style("display", "none");
+    svg.selectAll(".middle-to-right-line").style("display", "none");
+  }
+
+  function ungroupMiddleList() {
+    // Remove grouped links before ungrouping.
+    svg.selectAll(".grouped-left-line").remove();
+    svg.selectAll(".grouped-right-line").remove();
+    populateMiddleListUngrouped();
+    svg.selectAll(".left-to-middle-line").style("display", null);
+    svg.selectAll(".middle-to-right-line").style("display", null);
+  }
+</script>
+
+</body>
+</html>
